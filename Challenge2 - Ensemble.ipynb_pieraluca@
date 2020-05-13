@@ -1,0 +1,67 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "best_cat = pd.read_csv('Submission2/guess11.csv', na_values = 'null')#,nrows=30000)\n",
+    "best_light = pd.read_csv('Submission2/guess5.csv', na_values = 'null')\n",
+    "best_log = pd.read_csv('Submission2/guess4.csv', na_values = 'null')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "ensembled_prediction = best_light\n",
+    "ensembled_prediction['nhenoshow_flag'] = (\n",
+    "    0.1*best_log['nhenoshow_flag']\n",
+    "    +0.1*best_cat['nhenoshow_flag']\n",
+    "    +0.9*best_light['nhenoshow_flag']\n",
+    "    )\n",
+    "ensembled_prediction[['ID','nhenoshow_flag']].to_csv('guessTempEnsemble.csv', index=False)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 2",
+   "language": "python",
+   "name": "python2"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 2
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython2",
+   "version": "2.7.16"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}

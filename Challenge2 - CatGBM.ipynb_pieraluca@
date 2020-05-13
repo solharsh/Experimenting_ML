@@ -1,0 +1,744 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1027,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "import numpy as np\n",
+    "import time\n",
+    "from sklearn.preprocessing import StandardScaler, LabelEncoder,KBinsDiscretizer,OneHotEncoder\n",
+    "from sklearn import metrics\n",
+    "from sklearn.model_selection import train_test_split, KFold\n",
+    "from sklearn.feature_selection import SelectFromModel\n",
+    "from datetime import timedelta\n",
+    "from catboost import CatBoostClassifier\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "seed = np.random.seed(8675309)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1028,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def auc(m, train, test): \n",
+    "    return (metrics.roc_auc_score(y_train,m.predict_proba(train)[:,1]),\n",
+    "                            metrics.roc_auc_score(y_test,m.predict_proba(test)[:,1]))\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1029,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train = pd.read_csv('WFS_Training.csv', na_values = 'null')#,nrows=30000)\n",
+    "public_test = pd.read_csv('WFS_TestFeatures.csv', na_values = 'null')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1030,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "score_cols = [\n",
+    "   # 'commute_distance',\n",
+    "    #'shift_duration',\n",
+    "    #'nbr_shift_day',    \n",
+    "   # 'distdur'\n",
+    "]\n",
+    "cat_cols = [\n",
+    "           # 'app_esl_status',\n",
+    "           # 'cand_education',\n",
+    "           # 'cand_assess_overall_score',\n",
+    "           # 'shift_code',\n",
+    "            #'shift_code_group',\n",
+    "            #'shift_days_of_week',\n",
+    "            #'shift_emp_class',\n",
+    "            #'shift_startday',\n",
+    "            #'shift_type',\n",
+    "            #'shift_schedule_type',\n",
+    "            #'shift_start_time_group'\n",
+    "           ]\n",
+    "feat_cols = [\n",
+    "           'appointment_nbr',\n",
+    " #          'application_per_candidate',\n",
+    " #           'day_to_first_app',\n",
+    "            'appointment_for_app',\n",
+    " #           'nbr_application'\n",
+    "]\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1031,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train['create_year'] = pd.DatetimeIndex(train.app_created_date).year\n",
+    "train['create_month'] = pd.DatetimeIndex(train.app_created_date).month\n",
+    "train['create_day'] = pd.DatetimeIndex(train.app_created_date).day\n",
+    "\n",
+    "train['app_year'] = pd.DatetimeIndex(train.appt_1_date).year\n",
+    "train['app_month'] = pd.DatetimeIndex(train.appt_1_date).month\n",
+    "train['app_day'] = pd.DatetimeIndex(train.appt_1_date).day\n",
+    "train['app_quarter'] = pd.DatetimeIndex(train.appt_1_date).quarter\n",
+    "train['app_weekday'] = pd.DatetimeIndex(train.appt_1_date).weekday\n",
+    "train['app_weekend'] = (train['app_weekday'] // 5 == 1).astype(float)\n",
+    "\n",
+    "\n",
+    "public_test['create_year'] = pd.DatetimeIndex(public_test.app_created_date).year\n",
+    "public_test['create_month'] = pd.DatetimeIndex(public_test.app_created_date).month\n",
+    "public_test['create_day'] = pd.DatetimeIndex(public_test.app_created_date).day\n",
+    "\n",
+    "public_test['app_year'] = pd.DatetimeIndex(public_test.appt_1_date).year\n",
+    "public_test['app_month'] = pd.DatetimeIndex(public_test.appt_1_date).month\n",
+    "public_test['app_day'] = pd.DatetimeIndex(public_test.appt_1_date).day\n",
+    "public_test['app_quarter'] = pd.DatetimeIndex(public_test.appt_1_date).quarter\n",
+    "public_test['app_weekday'] = pd.DatetimeIndex(public_test.appt_1_date).weekday\n",
+    "public_test['app_weekend'] = (public_test['app_weekday'] // 5 == 1).astype(float)\n",
+    "\n",
+    "\n",
+    "date_cols = [\n",
+    "#'create_year', \n",
+    "#'create_month', \n",
+    "#'create_day',\n",
+    "#'app_year',\n",
+    "'app_month',\n",
+    "'app_day',\n",
+    "#'app_quarter',\n",
+    "#'app_weekday',\n",
+    "#'app_weekend'\n",
+    "]\n",
+    "\n",
+    "#cat_cols = cat_cols + date_cols"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1032,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train['appointment_for_app'] = train.groupby('app_id')['cand_id'].transform('count')\n",
+    "public_test['appointment_for_app'] = public_test.groupby('app_id')['cand_id'].transform('count')\n",
+    "#this should be groupd by app_id but cand_id has better effect\n",
+    "train['appointment_nbr'] = train.sort_values(['ID'], ascending=[True]) \\\n",
+    "             .groupby(['cand_id']).cumcount() + 1\n",
+    "public_test['appointment_nbr'] = public_test.sort_values(['ID'], ascending=[True]) \\\n",
+    "             .groupby(['cand_id']).cumcount() + 1"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1033,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "\"\\napplication_per_candidate = pd.DataFrame(train.groupby('cand_id').app_id.nunique())\\napplication_per_candidate.columns = ['nbr_application']\\ntrain = pd.merge(left=train,right=application_per_candidate, left_on='cand_id', right_on='cand_id')\\n\\napplication_per_candidate = pd.DataFrame(public_test.groupby('cand_id').app_id.nunique())\\napplication_per_candidate.columns = ['nbr_application']\\npublic_test = pd.merge(left=public_test,right=application_per_candidate, left_on='cand_id', right_on='cand_id')\\n\""
+      ]
+     },
+     "execution_count": 1033,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "#commenting out also this because it doesn't like it\n",
+    "'''\n",
+    "application_per_candidate = pd.DataFrame(train.groupby('cand_id').app_id.nunique())\n",
+    "application_per_candidate.columns = ['nbr_application']\n",
+    "train = pd.merge(left=train,right=application_per_candidate, left_on='cand_id', right_on='cand_id')\n",
+    "\n",
+    "application_per_candidate = pd.DataFrame(public_test.groupby('cand_id').app_id.nunique())\n",
+    "application_per_candidate.columns = ['nbr_application']\n",
+    "public_test = pd.merge(left=public_test,right=application_per_candidate, left_on='cand_id', right_on='cand_id')\n",
+    "'''"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1034,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>ID</th>\n",
+       "      <th>app_id</th>\n",
+       "      <th>cand_id</th>\n",
+       "      <th>app_created_date</th>\n",
+       "      <th>app_esl_status</th>\n",
+       "      <th>appt_1_date</th>\n",
+       "      <th>cand_education</th>\n",
+       "      <th>cand_assess_overall_score</th>\n",
+       "      <th>commute_distance</th>\n",
+       "      <th>shift_code</th>\n",
+       "      <th>...</th>\n",
+       "      <th>create_month</th>\n",
+       "      <th>create_day</th>\n",
+       "      <th>app_year</th>\n",
+       "      <th>app_month</th>\n",
+       "      <th>app_day</th>\n",
+       "      <th>app_quarter</th>\n",
+       "      <th>app_weekday</th>\n",
+       "      <th>app_weekend</th>\n",
+       "      <th>appointment_for_app</th>\n",
+       "      <th>appointment_nbr</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>78373</th>\n",
+       "      <td>146448</td>\n",
+       "      <td>App-17408699</td>\n",
+       "      <td>CID000153077</td>\n",
+       "      <td>2019-02-18T00:00:00.0000000</td>\n",
+       "      <td>NonESL</td>\n",
+       "      <td>2019-03-12T09:30:00.0000000</td>\n",
+       "      <td>Undergraduate</td>\n",
+       "      <td>High</td>\n",
+       "      <td>10.16</td>\n",
+       "      <td>PT3649</td>\n",
+       "      <td>...</td>\n",
+       "      <td>2</td>\n",
+       "      <td>18</td>\n",
+       "      <td>2019.0</td>\n",
+       "      <td>3.0</td>\n",
+       "      <td>12.0</td>\n",
+       "      <td>1.0</td>\n",
+       "      <td>1.0</td>\n",
+       "      <td>0.0</td>\n",
+       "      <td>1</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "<p>1 rows × 32 columns</p>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "           ID        app_id       cand_id             app_created_date  \\\n",
+       "78373  146448  App-17408699  CID000153077  2019-02-18T00:00:00.0000000   \n",
+       "\n",
+       "      app_esl_status                  appt_1_date cand_education  \\\n",
+       "78373         NonESL  2019-03-12T09:30:00.0000000  Undergraduate   \n",
+       "\n",
+       "      cand_assess_overall_score  commute_distance shift_code  ...  \\\n",
+       "78373                      High             10.16     PT3649  ...   \n",
+       "\n",
+       "      create_month create_day app_year app_month app_day app_quarter  \\\n",
+       "78373            2         18   2019.0       3.0    12.0         1.0   \n",
+       "\n",
+       "      app_weekday  app_weekend  appointment_for_app appointment_nbr  \n",
+       "78373         1.0          0.0                    1               1  \n",
+       "\n",
+       "[1 rows x 32 columns]"
+      ]
+     },
+     "execution_count": 1034,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train[train.cand_id =='CID000153077']"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1035,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "test = train.groupby('cand_id').app_id.nunique()\n",
+    "test.columns = ['cand_id', 'nbr_app']"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1036,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train['day_to_first_app'] = (pd.DatetimeIndex(train.appt_1_date) - pd.DatetimeIndex(train.app_created_date)).days\n",
+    "public_test['day_to_first_app'] = (pd.DatetimeIndex(public_test.appt_1_date) - pd.DatetimeIndex(public_test.app_created_date)).days"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1037,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Mean Scores###\n",
+    "train = train.fillna(train[score_cols].mean())\n",
+    "public_test = public_test.fillna(public_test[score_cols].mean())\n",
+    "### not specified for categorical ###\n",
+    "ns_value = '1500'\n",
+    "train[cat_cols] = train[cat_cols].fillna(ns_value)\n",
+    "public_test[cat_cols] = public_test[cat_cols].fillna(ns_value)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1038,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#train[date_cols] = train[date_cols].astype(int)\n",
+    "#public_test[date_cols] = public_test[date_cols].astype(int)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1039,
+   "metadata": {},
+   "outputs": [
+    {
+     "ename": "ValueError",
+     "evalue": "Cannot convert non-finite values (NA or inf) to integer",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[0;31mValueError\u001b[0m                                Traceback (most recent call last)",
+      "\u001b[0;32m<ipython-input-1039-167af07a7dbe>\u001b[0m in \u001b[0;36m<module>\u001b[0;34m()\u001b[0m\n\u001b[0;32m----> 1\u001b[0;31m \u001b[0mtrain\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;34m'shift_start_time_group'\u001b[0m\u001b[0;34m]\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mtrain\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;34m'shift_start_time_group'\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mastype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mint\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m      2\u001b[0m \u001b[0mpublic_test\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;34m'shift_start_time_group'\u001b[0m\u001b[0;34m]\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mpublic_test\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;34m'shift_start_time_group'\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mastype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mint\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;32m/anaconda2/lib/python2.7/site-packages/pandas/core/generic.pyc\u001b[0m in \u001b[0;36mastype\u001b[0;34m(self, dtype, copy, errors, **kwargs)\u001b[0m\n\u001b[1;32m   5689\u001b[0m             \u001b[0;31m# else, only a single dtype is given\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m   5690\u001b[0m             new_data = self._data.astype(dtype=dtype, copy=copy, errors=errors,\n\u001b[0;32m-> 5691\u001b[0;31m                                          **kwargs)\n\u001b[0m\u001b[1;32m   5692\u001b[0m             \u001b[0;32mreturn\u001b[0m \u001b[0mself\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0m_constructor\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mnew_data\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0m__finalize__\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m   5693\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;32m/anaconda2/lib/python2.7/site-packages/pandas/core/internals/managers.pyc\u001b[0m in \u001b[0;36mastype\u001b[0;34m(self, dtype, **kwargs)\u001b[0m\n\u001b[1;32m    529\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    530\u001b[0m     \u001b[0;32mdef\u001b[0m \u001b[0mastype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdtype\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m--> 531\u001b[0;31m         \u001b[0;32mreturn\u001b[0m \u001b[0mself\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mapply\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m'astype'\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdtype\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0mdtype\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m    532\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    533\u001b[0m     \u001b[0;32mdef\u001b[0m \u001b[0mconvert\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;32m/anaconda2/lib/python2.7/site-packages/pandas/core/internals/managers.pyc\u001b[0m in \u001b[0;36mapply\u001b[0;34m(self, f, axes, filter, do_integrity_check, consolidate, **kwargs)\u001b[0m\n\u001b[1;32m    393\u001b[0m                                             copy=align_copy)\n\u001b[1;32m    394\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m--> 395\u001b[0;31m             \u001b[0mapplied\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mgetattr\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mb\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mf\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m    396\u001b[0m             \u001b[0mresult_blocks\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0m_extend_blocks\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mapplied\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mresult_blocks\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    397\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;32m/anaconda2/lib/python2.7/site-packages/pandas/core/internals/blocks.pyc\u001b[0m in \u001b[0;36mastype\u001b[0;34m(self, dtype, copy, errors, values, **kwargs)\u001b[0m\n\u001b[1;32m    532\u001b[0m     \u001b[0;32mdef\u001b[0m \u001b[0mastype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdtype\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mcopy\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0mFalse\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0merrors\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0;34m'raise'\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mvalues\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0mNone\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    533\u001b[0m         return self._astype(dtype, copy=copy, errors=errors, values=values,\n\u001b[0;32m--> 534\u001b[0;31m                             **kwargs)\n\u001b[0m\u001b[1;32m    535\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    536\u001b[0m     def _astype(self, dtype, copy=False, errors='raise', values=None,\n",
+      "\u001b[0;32m/anaconda2/lib/python2.7/site-packages/pandas/core/internals/blocks.pyc\u001b[0m in \u001b[0;36m_astype\u001b[0;34m(self, dtype, copy, errors, values, **kwargs)\u001b[0m\n\u001b[1;32m    631\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    632\u001b[0m                     \u001b[0;31m# _astype_nansafe works fine with 1-d only\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m--> 633\u001b[0;31m                     \u001b[0mvalues\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mastype_nansafe\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mvalues\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mravel\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdtype\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mcopy\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0mTrue\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m    634\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    635\u001b[0m                 \u001b[0;31m# TODO(extension)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;32m/anaconda2/lib/python2.7/site-packages/pandas/core/dtypes/cast.pyc\u001b[0m in \u001b[0;36mastype_nansafe\u001b[0;34m(arr, dtype, copy, skipna)\u001b[0m\n\u001b[1;32m    674\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    675\u001b[0m         \u001b[0;32mif\u001b[0m \u001b[0;32mnot\u001b[0m \u001b[0mnp\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0misfinite\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0marr\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mall\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m--> 676\u001b[0;31m             raise ValueError('Cannot convert non-finite values (NA or inf) to '\n\u001b[0m\u001b[1;32m    677\u001b[0m                              'integer')\n\u001b[1;32m    678\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;31mValueError\u001b[0m: Cannot convert non-finite values (NA or inf) to integer"
+     ]
+    }
+   ],
+   "source": [
+    "train['shift_start_time_group'] = train['shift_start_time_group'].astype(int)\n",
+    "public_test['shift_start_time_group'] = public_test['shift_start_time_group'].astype(int)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1040,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "for c in cat_cols:\n",
+    "    le = LabelEncoder()\n",
+    "    unique_elements = list(set(train[c].values.tolist() + public_test[c].values.tolist()))\n",
+    "    le.fit(unique_elements)\n",
+    "    train[c] = le.transform(train[c])\n",
+    "    public_test[c] = le.transform(public_test[c])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1041,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "X= train.loc[:, train.columns != 'nhenoshow_flag']\n",
+    "y= train.nhenoshow_flag"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1042,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "X = X[feat_cols + score_cols + cat_cols + date_cols]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1043,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train, test, y_train, y_test = train_test_split(X, y,\n",
+    "                                                random_state=10, test_size=0.25)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1044,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[]"
+      ]
+     },
+     "execution_count": 1044,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "cal_feat = [train.columns.get_loc(c) for c in cat_cols]\n",
+    "cal_feat"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1062,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Learning rate set to 0.5\n",
+      "0:\ttotal: 15.8ms\tremaining: 933ms\n",
+      "1:\ttotal: 28.3ms\tremaining: 821ms\n",
+      "2:\ttotal: 40.5ms\tremaining: 770ms\n",
+      "3:\ttotal: 55.1ms\tremaining: 771ms\n",
+      "4:\ttotal: 67.9ms\tremaining: 747ms\n",
+      "5:\ttotal: 79.9ms\tremaining: 719ms\n",
+      "6:\ttotal: 93ms\tremaining: 704ms\n",
+      "7:\ttotal: 106ms\tremaining: 689ms\n",
+      "8:\ttotal: 118ms\tremaining: 669ms\n",
+      "9:\ttotal: 130ms\tremaining: 651ms\n",
+      "10:\ttotal: 143ms\tremaining: 637ms\n",
+      "11:\ttotal: 156ms\tremaining: 624ms\n",
+      "12:\ttotal: 169ms\tremaining: 610ms\n",
+      "13:\ttotal: 181ms\tremaining: 594ms\n",
+      "14:\ttotal: 197ms\tremaining: 591ms\n",
+      "15:\ttotal: 221ms\tremaining: 608ms\n",
+      "16:\ttotal: 239ms\tremaining: 604ms\n",
+      "17:\ttotal: 259ms\tremaining: 603ms\n",
+      "18:\ttotal: 277ms\tremaining: 598ms\n",
+      "19:\ttotal: 295ms\tremaining: 590ms\n",
+      "20:\ttotal: 321ms\tremaining: 596ms\n",
+      "21:\ttotal: 340ms\tremaining: 588ms\n",
+      "22:\ttotal: 358ms\tremaining: 576ms\n",
+      "23:\ttotal: 372ms\tremaining: 558ms\n",
+      "24:\ttotal: 384ms\tremaining: 537ms\n",
+      "25:\ttotal: 396ms\tremaining: 518ms\n",
+      "26:\ttotal: 426ms\tremaining: 521ms\n",
+      "27:\ttotal: 443ms\tremaining: 507ms\n",
+      "28:\ttotal: 458ms\tremaining: 489ms\n",
+      "29:\ttotal: 474ms\tremaining: 474ms\n",
+      "30:\ttotal: 487ms\tremaining: 456ms\n",
+      "31:\ttotal: 500ms\tremaining: 438ms\n",
+      "32:\ttotal: 515ms\tremaining: 421ms\n",
+      "33:\ttotal: 526ms\tremaining: 402ms\n",
+      "34:\ttotal: 542ms\tremaining: 387ms\n",
+      "35:\ttotal: 555ms\tremaining: 370ms\n",
+      "36:\ttotal: 573ms\tremaining: 356ms\n",
+      "37:\ttotal: 591ms\tremaining: 342ms\n",
+      "38:\ttotal: 633ms\tremaining: 341ms\n",
+      "39:\ttotal: 663ms\tremaining: 331ms\n",
+      "40:\ttotal: 684ms\tremaining: 317ms\n",
+      "41:\ttotal: 703ms\tremaining: 301ms\n",
+      "42:\ttotal: 723ms\tremaining: 286ms\n",
+      "43:\ttotal: 745ms\tremaining: 271ms\n",
+      "44:\ttotal: 763ms\tremaining: 254ms\n",
+      "45:\ttotal: 780ms\tremaining: 237ms\n",
+      "46:\ttotal: 804ms\tremaining: 222ms\n",
+      "47:\ttotal: 851ms\tremaining: 213ms\n",
+      "48:\ttotal: 883ms\tremaining: 198ms\n",
+      "49:\ttotal: 900ms\tremaining: 180ms\n",
+      "50:\ttotal: 920ms\tremaining: 162ms\n",
+      "51:\ttotal: 939ms\tremaining: 144ms\n",
+      "52:\ttotal: 950ms\tremaining: 125ms\n",
+      "53:\ttotal: 967ms\tremaining: 107ms\n",
+      "54:\ttotal: 984ms\tremaining: 89.5ms\n",
+      "55:\ttotal: 1s\tremaining: 71.5ms\n",
+      "56:\ttotal: 1.04s\tremaining: 55ms\n",
+      "57:\ttotal: 1.07s\tremaining: 36.8ms\n",
+      "58:\ttotal: 1.08s\tremaining: 18.4ms\n",
+      "59:\ttotal: 1.11s\tremaining: 0us\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "(0.9306953004630347, 0.9320275630163177)"
+      ]
+     },
+     "execution_count": 1062,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "clf = CatBoostClassifier(eval_metric=\"AUC\",\n",
+    "                         depth=3,  \n",
+    "                         iterations= 60,\n",
+    "                         #l2_leaf_reg=5,\n",
+    "                         #early_stopping_rounds = True,\n",
+    "                         #od_wait = 10,\n",
+    "                         #class_weights=[1, 1])#,\n",
+    "                         #learning_rate= 0.5, l2_leaf_reg= 9\n",
+    "                        )\n",
+    "\n",
+    "clf.fit(train,y_train,cal_feat)\n",
+    "auc(clf, train, test)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1046,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>Feature</th>\n",
+       "      <th>Score</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>appointment_for_app</td>\n",
+       "      <td>88.899680</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>appointment_nbr</td>\n",
+       "      <td>4.990667</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>app_month</td>\n",
+       "      <td>3.479724</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>app_day</td>\n",
+       "      <td>2.629930</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "               Feature      Score\n",
+       "1  appointment_for_app  88.899680\n",
+       "0      appointment_nbr   4.990667\n",
+       "2            app_month   3.479724\n",
+       "3              app_day   2.629930"
+      ]
+     },
+     "execution_count": 1046,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "from catboost import Pool\n",
+    "feature_score = pd.DataFrame(list(zip(X.dtypes.index, \n",
+    "                             clf.get_feature_importance(Pool(X, label=y, cat_features=cal_feat)))),\n",
+    "                columns=['Feature','Score'])\n",
+    "\n",
+    "feature_score = feature_score.sort_values(by='Score', ascending=False, inplace=False, kind='quicksort', na_position='last')\n",
+    "feature_score"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1047,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "cal_feat = [public_test.columns.get_loc(c) for c in cat_cols]\n",
+    "cal_feat\n",
+    "predictions = predictions[feat_cols + score_cols + cat_cols + date_cols+ ['ID']]\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1048,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "predictions = public_test.copy()\n",
+    "predictions = predictions[feat_cols + score_cols + cat_cols + date_cols+ ['ID']]\n",
+    "#predictions_cat_prob =  clf.predict_proba(predictions.loc[:, predictions.columns != 'ID'].values)\n",
+    "predictions['nhenoshow_flag']=  [l[1] for l in clf.predict(predictions.loc[:, \n",
+    "                                            predictions.columns != 'ID'].values,\n",
+    "                                            prediction_type= 'Probability')]\n",
+    "predictions[['ID','nhenoshow_flag']].to_csv('guessTempCat.csv', index=False)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1049,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "('Overall accuracy of Light GBM model on split test:', 0.8622089875473741)\n"
+     ]
+    }
+   ],
+   "source": [
+    "predictions_cat_prob = clf.predict(test)\n",
+    "acc_lgbm = accuracy_score(y_test,predictions_cat_prob)\n",
+    "print('Overall accuracy of Light GBM model on split test:', acc_lgbm)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1050,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<Figure size 432x288 with 0 Axes>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    },
+    {
+     "data": {
+      "image/png": "iVBORw0KGgoAAAANSUhEUgAAAdkAAAF/CAYAAAAFArPxAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAADl0RVh0U29mdHdhcmUAbWF0cGxvdGxpYiB2ZXJzaW9uIDIuMi4zLCBodHRwOi8vbWF0cGxvdGxpYi5vcmcvIxREBQAAIABJREFUeJzt3Xd8VFXex/HvpHcS+qNSpTwgBASkSGAXxKVLUUhgiSIqTYFQIhCqogSFACIiBqUYZBOaiIIFXSXCCiLKgtKLKD30ZEL6PH+4zkMWQiCZm2FmPm9feb0yd86959wY/eZ37pl7TRaLxSIAAGBzbvYeAAAAzoqQBQDAIIQsAAAGIWQBADAIIQsAgEEIWQAADELIwmHk5uZqyZIl6tmzp7p166ZOnTpp5syZysrKKtYxhwwZovbt22v58uV3vP+ePXs0fPjwIvf/39q2bauGDRvKbDbn27527VrVrl1bn3322S33T01N1ZNPPlng+926ddPVq1dtMlYAhfOw9wCA2zV16lRduXJFy5YtU2BgoNLT0zVmzBhNmDBBM2fOLNIxz549qy1btmjXrl1yd3e/4/3r16+vefPmFanvgoSEhGjTpk3q3r27ddu6detUtmzZQve9cuWK9uzZU+D7H330kU3GCOD2UMnCIZw4cUIff/yxpk+frsDAQEmSn5+fXnrpJbVr107SH1XcmDFj1KVLF3Xt2lWvv/66cnJyJP0Rhm+++aYiIiLUtm1brVixQmlpaXr22WeVk5Ojnj176rffflPt2rV18eJFa79/vjabzRo+fLi6deumHj16aOLEicrLy9P27dvVpUuXIvVfkMcee0zr16+3vj558qTS09NVvXp167bVq1erV69e6t69u9q0aWM93vjx45WRkaFu3bopNzdX9erV04gRI9S+fXvt2bPHej7z589XRESEcnNzlZKSorCwMG3bts0W/6oAXIeQhUP45ZdfVKNGDQUEBOTbXq5cObVv316S9Morryg4OFgff/yx1qxZowMHDmjx4sWSpKysLIWEhCgxMVHz5s1TbGysPD09FR8fLx8fH3300UeqXLlygf1v2rRJZrNZH330kVavXi1J+v333/O1udP+MzMzb9rXX/7yF+3fv1/nzp2T9Ef1eX1VazabtWrVKsXHx2vdunWaM2eOtZKPjY21no+7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pH79+mnDhg2aOXOmVq1apeDgYA0cODDfcS9cuKBFixZp/fr18vLy0owZM/TQQw+pTp06mjp1qn777Tdt3LhRK1askMlkUv/+/RUWFqY33nhDw4cPV8uWLRUfH6+jR4/mO+65c+dUqVKlfNu8vb1vOK9ff/31hpvhBwUFWW+BefjwYaWlpem3337T+fPntXTpUl24cEG//vqrbX/AAG4bIQunc/2zSf/bn/d4PnjwoHbu3Kndu3dL+uPm8+fPn1dAQIBCQkIkSQ8++GC+fX///XfVrFlTPj4+kqSYmJh87x88eFCnTp1S//79JUlXrlzRb7/9pkOHDlmfTNSoUaMbQvaee+7RF198kW/bpUuXtGvXLtWsWdO67WY3w2/durV+/fVXDR06VB4eHhoyZIhq1qypv//97xo1apRycnKK/NxVAMVHyMKlmEwmSX88ZKFixYoaPHiwMjIy9PbbbysoKEipqam6ePGiSpcurT179qhixYrWfStXrqyjR48qKytLXl5eGj58uCZMmCCTySSLxaLq1aurRo0aevfdd2UymbR06VLVqlVL1atX108//aTWrVvr559/vmFMDRs21IkTJ7R7926FhobKYrFo/vz58vb2tobsnzfD/+abbyRJTz/9tCwWi7Zv367y5ctr8eLF+umnnzR79mxNnDhRZrNZ8fHxOnfunCIiIgp9QhMAYxCycEkRERGaOHGi+vXrp7S0NPXt21deXl6KjY3VM888o1KlSsnDI/9/HqVLl9Zzzz2nfv36yWQyqU2bNqpQoYIefPBBvfjii1q8eLFatGihPn36KCsrS6GhoapQoYKmTJmikSNH6r333lPp0qVvmAp2c3PTG2+8oZdfflnXrl1Tenq6GjZsqKioKJ07d05SwTfDb9u2rUaOHKlly5bJzc1Nzz//vKpWraq33npL69atk6enp4YPH15iP1cA+fGAAAAADMJHeAAAMAghCwCAQQhZAAAMQsgCAGAQQhYAAIMQsgAAGISQBQDAIIQsAAAG+T9ysd9/jT0EygAAAABJRU5ErkJggg==\n",
+      "text/plain": [
+       "<Figure size 576x432 with 2 Axes>"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "import seaborn as sns\n",
+    "sns.set_style(\"whitegrid\")\n",
+    "\n",
+    "#Print Confusion Matrix\n",
+    "plt.figure()\n",
+    "cm = confusion_matrix(y_test, predictions_cat_prob)\n",
+    "labels = ['No Default', 'Default']\n",
+    "plt.figure(figsize=(8,6))\n",
+    "sns.heatmap(cm, xticklabels = labels, yticklabels = labels, annot = True, fmt='d', cmap=\"Blues\", vmin = 0.2);\n",
+    "plt.title('Confusion Matrix')\n",
+    "plt.ylabel('True Class')\n",
+    "plt.xlabel('Predicted Class')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1051,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "Counter({0.0: 12811, 1.0: 38905})"
+      ]
+     },
+     "execution_count": 1051,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "from collections import Counter\n",
+    "Counter(predictions_cat_prob)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1052,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "Counter({0L: 43517, 1L: 163346})"
+      ]
+     },
+     "execution_count": 1052,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "from collections import Counter\n",
+    "Counter(y)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 2",
+   "language": "python",
+   "name": "python2"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 2
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython2",
+   "version": "2.7.16"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
